@@ -246,10 +246,10 @@ app.post('/render', async (req, res) => {
     if (!raw.length) return res.status(400).json({ error: 'no players' });
     const players = raw.map(p => ({
       name: String(p.name || '').slice(0, 24),
-      species: String(p.species || ''),
+      species: String(p.pokemon ?? p.species ?? ''),
       level: Number(p.level) || 0,
-      hpCur: Number(p.hpCur) || 0,
-      hpMax: Number(p.hpMax) || 0
+      hpCur: Number(p.lead ?? p.hpCur) || 0,   // "lead"  (first Full Fill number)
+      hpMax: Number(p.total ?? p.hpMax) || 0   // "total" (second Full Fill number)
     }));
     const hour = req.body?.hour;
     const hourLabel = (hour === undefined || hour === null || hour === '')

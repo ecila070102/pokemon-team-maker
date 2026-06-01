@@ -152,15 +152,18 @@ async function renderParty(players) {
   return canvas.toBuffer('image/png');
 }
 
-// ---- Catbox upload ----
-async function uploadToCatbox(pngBuffer) {
+// ---- image host upload (0x0.st tolerates datacenter IPs) ----
+async function uploadImage(pngBuffer) {
   const form = new FormData();
-  form.append('reqtype', 'fileupload');
-  form.append('fileToUpload', new Blob([pngBuffer], { type: 'image/png' }), 'party.png');
-  const r = await fetch('https://catbox.moe/user/api.php', { method: 'POST', body: form });
+  form.append('file', new Blob([pngBuffer], { type: 'image/png' }), 'party.png');
+  const r = await fetch('https://0x0.st', {
+    method: 'POST',
+    headers: { 'User-Agent': 'gba-party-renderer/1.0' }, // 0x0.st rejects blank UAs
+    body: form
+  });
   const text = (await r.text()).trim();
-  if (!/^https?:\/\//.test(text)) throw new Error('Catbox said: ' + text);
-  return text;
+  if (!/^https?:\/\//.test(text)) throw new Error('Host said: ' + text);
+  return text; // e.g. https://0x0.st/abc.png
 }
 
 // ---- routes ----
@@ -183,7 +186,7 @@ app.post('/render', async (req, res) => {
     }));
 
     const png = await renderParty(norm);
-    const link = await uploadToCatbox(png);
+    const link = await uploadImage(png);
     res.json({ link });
   } catch (e) {
     console.error(e);

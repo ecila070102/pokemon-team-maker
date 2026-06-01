@@ -1,15 +1,7 @@
 /* ============================================================
- *  GBA PARTY-SCREEN RENDERER  (external service)
- *  ------------------------------------------------------------
- *  POST /render
- *    headers: x-api-key: <API_KEY>   (only if API_KEY env is set)
- *    body (JSON): {
- *      players: [ { name, species, level, hpCur, hpMax }, ... up to 5 ]
- *    }
- *  -> { link: "https://files.catbox.moe/xxxx.png" }
- *
- *  Node 18+ (global fetch / FormData / Blob).  No API keys needed
- *  for Catbox.  Set API_KEY env to lock the endpoint down.
+ *  GBA PARTY-SCREEN RENDERER  (FireRed/LeafGreen faithful)
+ *  POST /render  { players:[{name,species,level,hpCur,hpMax}] }  -> { link }
+ *  Upload host: ImgBB (env IMGBB_API_KEY).  Optional API_KEY to lock endpoint.
  * ============================================================ */
 
 const express = require('express');
@@ -19,37 +11,27 @@ const app = express();
 app.use(express.json({ limit: '1mb' }));
 
 const PORT = process.env.PORT || 3000;
-const API_KEY = process.env.API_KEY || '';      // optional shared secret
+const API_KEY = process.env.API_KEY || '';
 const FONT_NAME = 'PartyFont';
 
-// ---- font loading (Press Start 2P from Google Fonts) ----
+// ---------- font ----------
 let fontReady = false;
 async function ensureFont() {
   if (fontReady) return;
   try {
     const url = 'https://github.com/google/fonts/raw/main/ofl/pressstart2p/PressStart2P-Regular.ttf';
     const r = await fetch(url);
-    const buf = Buffer.from(await r.arrayBuffer());
-    GlobalFonts.register(buf, FONT_NAME);
-  } catch (e) {
-    console.warn('Font fetch failed, falling back to default monospace:', e.message);
-  }
+    GlobalFonts.register(Buffer.from(await r.arrayBuffer()), FONT_NAME);
+  } catch (e) { console.warn('font fetch failed:', e.message); }
   fontReady = true;
 }
-function font(px) {
-  return fontReady ? `${px}px "${FONT_NAME}"` : `bold ${px}px monospace`;
-}
+const font = (px) => (fontReady ? `${px}px "${FONT_NAME}"` : `bold ${px}px monospace`);
 
-// ---- sprite resolution via PokeAPI (cached) ----
+// ---------- sprites ----------
 const spriteCache = new Map();
-function slugify(species) {
-  return String(species || '')
-    .toLowerCase().trim()
-    .replace(/♀/g, '-f').replace(/♂/g, '-m')
-    .replace(/[.'’]/g, '')
-    .replace(/\s+/g, '-');
-}
-async function getSpriteImage(species) {
+const slugify = (s) => String(s || '').toLowerCase().trim()
+  .replace(/♀/g, '-f').replace(/♂/g, '-m').replace(/[.'’]/g, '').replace(/\s+/g, '-');
+async function getSprite(species) {
   const slug = slugify(species);
   if (!slug) return null;
   if (spriteCache.has(slug)) return spriteCache.get(slug);
@@ -57,21 +39,35 @@ async function getSpriteImage(species) {
     const r = await fetch('https://pokeapi.co/api/v2/pokemon/' + encodeURIComponent(slug));
     if (!r.ok) { spriteCache.set(slug, null); return null; }
     const d = await r.json();
-    const url =
-      d?.sprites?.versions?.['generation-iii']?.['firered-leafgreen']?.front_default ||
-      d?.sprites?.front_default;
+    const url = d?.sprites?.versions?.['generation-iii']?.['firered-leafgreen']?.front_default
+             || d?.sprites?.front_default;
     if (!url) { spriteCache.set(slug, null); return null; }
     const ir = await fetch(url);
     const img = await loadImage(Buffer.from(await ir.arrayBuffer()));
     spriteCache.set(slug, img);
     return img;
-  } catch (e) {
-    spriteCache.set(slug, null);
-    return null;
-  }
+  } catch (e) { spriteCache.set(slug, null); return null; }
 }
 
-// ---- drawing helpers ----
+// ---------- palette (FRLG) ----------
+const C = {
+  bg:        '#d8b878',
+  stripe:    'rgba(255,255,255,0.06)',
+  leadFill1: '#90d4dc', leadFill2: '#74c0ca', leadBorder: '#f08868',
+  panelFill1:'#5c94d4', panelFill2:'#3c74bc', panelTop:'#8cbcec', panelBorder:'#1c4c94',
+  hpLabel:   '#f0b028',
+  hpBox:     '#283038', hpTrack:'#586068',
+  textLight: '#f8f8f8', shadowDark:'#404858', shadowOnCyan:'#3c7078',
+  boxBorder: '#1c4c94', boxFill:'#f8f8f8', boxText:'#404858',
+  cancel:    '#d83838'
+};
+function hpColors(frac) {
+  if (frac > 0.5) return ['#58c838', '#90f070'];
+  if (frac > 0.2) return ['#f0c030', '#f8e870'];
+  return ['#f04838', '#f89880'];
+}
+
+// ---------- draw helpers ----------
 function roundRect(ctx, x, y, w, h, r) {
   ctx.beginPath();
   ctx.moveTo(x + r, y);
@@ -81,110 +77,114 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.arcTo(x, y, x + w, y, r);
   ctx.closePath();
 }
-function shadowText(ctx, txt, x, y, size, color) {
+const hpStr = (p) => (p.hpMax ? `${p.hpCur}/ ${p.hpMax}` : '—');
+function text(ctx, txt, x, y, size, color, shadow) {
   ctx.font = font(size);
-  ctx.fillStyle = '#404858'; ctx.fillText(txt, x + 2, y + 2);
-  ctx.fillStyle = color || '#ffffff'; ctx.fillText(txt, x, y);
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = shadow || C.shadowDark; ctx.fillText(txt, x + 2, y + 2);
+  ctx.fillStyle = color || C.textLight;   ctx.fillText(txt, x, y);
 }
-function hpColors(frac) {
-  if (frac > 0.5) return ['#58d048', '#a0f078'];
-  if (frac > 0.2) return ['#f8c038', '#fce878'];
-  return ['#f85838', '#fca0a0'];
+function rightText(ctx, txt, rightX, y, size, color, shadow) {
+  ctx.font = font(size);
+  const w = ctx.measureText(txt).width;
+  text(ctx, txt, rightX - w, y, size, color, shadow);
 }
-function drawHpBar(ctx, x, y, w, cur, max) {
+function hpBarBlock(ctx, barX, barW, top, h, cur, max) {
+  ctx.fillStyle = C.hpBox;   roundRect(ctx, barX - 2, top - 2, barW + 4, h + 4, 3); ctx.fill();
+  ctx.fillStyle = C.hpTrack; ctx.fillRect(barX, top, barW, h);
   const frac = max > 0 ? Math.max(0, Math.min(1, cur / max)) : 1;
-  shadowText(ctx, 'HP', x, y - 4, 14, '#f0a838');
-  const bx = x + 34, bw = w - 34, bh = 9;
-  ctx.fillStyle = '#202830'; roundRect(ctx, bx - 2, y - 15, bw + 4, bh + 4, 3); ctx.fill();
-  ctx.fillStyle = '#586068'; ctx.fillRect(bx, y - 13, bw, bh);
   const [c1, c2] = hpColors(frac);
-  ctx.fillStyle = c1; ctx.fillRect(bx, y - 13, bw * frac, bh);
-  ctx.fillStyle = c2; ctx.fillRect(bx, y - 13, bw * frac, 3);
+  ctx.fillStyle = c1; ctx.fillRect(barX, top, barW * frac, h);
+  ctx.fillStyle = c2; ctx.fillRect(barX, top, barW * frac, 3);
 }
-function drawPanel(ctx, p, x, y, w, h, big, sprite) {
-  ctx.fillStyle = big ? '#f87858' : '#3868a8';
-  roundRect(ctx, x, y, w, h, 12); ctx.fill();
-  const grad = ctx.createLinearGradient(0, y, 0, y + h);
-  grad.addColorStop(0, '#6fa8d8'); grad.addColorStop(1, '#4880b8');
-  ctx.fillStyle = grad; roundRect(ctx, x + 5, y + 5, w - 10, h - 10, 9); ctx.fill();
 
-  const hp = p.hpMax ? `${p.hpCur}/ ${p.hpMax}` : '—';
-  if (big) {
-    const cx = x + w / 2;
-    if (sprite) ctx.drawImage(sprite, cx - 64, y + 24, 128, 128);
-    shadowText(ctx, p.name, x + 24, y + h - 72, 22);
-    shadowText(ctx, 'Lv' + p.level, x + 24, y + h - 44, 18);
-    drawHpBar(ctx, x + 30, y + h - 14, w - 60, p.hpCur, p.hpMax);
-    shadowText(ctx, hp, x + w - 24 - hp.length * 11, y + h - 30, 16);
-  } else {
-    if (sprite) ctx.drawImage(sprite, x + 12, y + (h - 72) / 2, 72, 72);
-    shadowText(ctx, p.name, x + 96, y + 34, 18);
-    shadowText(ctx, 'Lv' + p.level, x + 96, y + 62, 15);
-    drawHpBar(ctx, x + 330, y + 38, 260, p.hpCur, p.hpMax);
-    shadowText(ctx, hp, x + w - 28 - hp.length * 11, y + 72, 15);
-  }
+function drawLead(ctx, p, sprite) {
+  const x = 28, y = 66, w = 372, h = 258, sh = C.shadowOnCyan;
+  ctx.fillStyle = C.leadBorder; roundRect(ctx, x, y, w, h, 12); ctx.fill();
+  const g = ctx.createLinearGradient(0, y, 0, y + h);
+  g.addColorStop(0, C.leadFill1); g.addColorStop(1, C.leadFill2);
+  ctx.fillStyle = g; roundRect(ctx, x + 6, y + 6, w - 12, h - 12, 8); ctx.fill();
+
+  if (sprite) ctx.drawImage(sprite, x + w / 2 - 64, y + 22, 128, 128);
+  text(ctx, p.name, x + 24, y + h - 92, 24, C.textLight, sh);
+  text(ctx, 'Lv' + p.level, x + 24, y + h - 60, 20, C.textLight, sh);
+  rightText(ctx, hpStr(p), x + w - 24, y + h - 56, 18, C.textLight, sh);
+  text(ctx, 'HP', x + 28, y + h - 10, 13, C.hpLabel, sh);
+  hpBarBlock(ctx, x + 60, w - 88, y + h - 22, 9, p.hpCur, p.hpMax);
 }
+
+function drawPanel(ctx, p, y, sprite) {
+  const x = 404, w = 648, h = 92, sh = C.shadowDark;
+  ctx.fillStyle = C.panelBorder; roundRect(ctx, x, y, w, h, 10); ctx.fill();
+  const g = ctx.createLinearGradient(0, y, 0, y + h);
+  g.addColorStop(0, C.panelFill1); g.addColorStop(1, C.panelFill2);
+  ctx.fillStyle = g; roundRect(ctx, x + 4, y + 4, w - 8, h - 8, 7); ctx.fill();
+  ctx.fillStyle = C.panelTop; roundRect(ctx, x + 4, y + 4, w - 8, 6, 7); ctx.fill();
+
+  if (sprite) ctx.drawImage(sprite, x + 12, y + (h - 64) / 2, 64, 64);
+  text(ctx, p.name, x + 92, y + 38, 20, C.textLight, sh);
+  text(ctx, 'Lv' + p.level, x + 92, y + 68, 17, C.textLight, sh);
+  text(ctx, 'HP', x + 330, y + 40, 13, C.hpLabel, sh);
+  hpBarBlock(ctx, x + 364, w - 364 - 18, y + 32, 8, p.hpCur, p.hpMax);
+  rightText(ctx, hpStr(p), x + w - 18, y + 72, 17, C.textLight, sh);
+}
+
 function drawBackground(ctx) {
-  ctx.fillStyle = '#d8c088'; ctx.fillRect(0, 0, 1080, 720);
-  ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 24;
-  for (let i = -720; i < 1080; i += 80) {
+  ctx.fillStyle = C.bg; ctx.fillRect(0, 0, 1080, 720);
+  ctx.strokeStyle = C.stripe; ctx.lineWidth = 26;
+  for (let i = -720; i < 1080; i += 92) {
     ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i + 720, 720); ctx.stroke();
   }
-  ctx.fillStyle = '#3868a8'; roundRect(ctx, 20, 612, 760, 88, 10); ctx.fill();
-  ctx.fillStyle = '#f8f8f8'; roundRect(ctx, 28, 620, 744, 72, 8); ctx.fill();
-  shadowText(ctx, 'Choose a POKéMON.', 48, 668, 22, '#404858');
-  ctx.fillStyle = '#d83838'; ctx.beginPath(); ctx.arc(900, 656, 30, 0, Math.PI * 2); ctx.fill();
-  shadowText(ctx, 'CANCEL', 945, 666, 20, '#f8f8f8');
+  ctx.fillStyle = C.boxBorder; roundRect(ctx, 18, 612, 772, 90, 10); ctx.fill();
+  ctx.fillStyle = C.boxFill;   roundRect(ctx, 26, 620, 756, 74, 7); ctx.fill();
+  text(ctx, 'Choose a POKéMON.', 46, 670, 22, C.boxText, '#c8c8c8');
+  ctx.fillStyle = C.cancel; ctx.beginPath(); ctx.arc(898, 657, 30, 0, Math.PI * 2); ctx.fill();
+  text(ctx, 'CANCEL', 942, 668, 22, C.textLight, C.shadowDark);
 }
 
 async function renderParty(players) {
   await ensureFont();
   const sprites = [];
-  for (const p of players) sprites.push(await getSpriteImage(p.species));
+  for (const p of players) sprites.push(await getSprite(p.species));
 
   const canvas = createCanvas(1080, 720);
   const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;   // crisp pixel sprites
   drawBackground(ctx);
-  drawPanel(ctx, players[0], 28, 70, 360, 250, true, sprites[0]);
+  drawLead(ctx, players[0], sprites[0]);
   for (let i = 1; i < players.length && i < 6; i++) {
-    drawPanel(ctx, players[i], 400, 30 + (i - 1) * 112, 656, 100, false, sprites[i]);
+    drawPanel(ctx, players[i], 28 + (i - 1) * 108, sprites[i]);
   }
   return canvas.toBuffer('image/png');
 }
 
-// ---- image host upload (0x0.st tolerates datacenter IPs) ----
-// ---- ImgBB upload (API key, works from cloud IPs) ----
+// ---------- ImgBB upload ----------
 async function uploadImage(pngBuffer) {
   const form = new FormData();
   form.append('image', pngBuffer.toString('base64'));
   const url = 'https://api.imgbb.com/1/upload?key=' + encodeURIComponent(process.env.IMGBB_API_KEY);
   const r = await fetch(url, { method: 'POST', body: form });
   const data = await r.json();
-  if (!data || !data.success) {
-    throw new Error('ImgBB said: ' + JSON.stringify(data && (data.error || data)));
-  }
-  return data.data.url; // https://i.ibb.co/xxxx/party.png
+  if (!data || !data.success) throw new Error('ImgBB said: ' + JSON.stringify(data && (data.error || data)));
+  return data.data.url;
 }
-// ---- routes ----
+
+// ---------- routes ----------
 app.get('/', (_req, res) => res.send('GBA party renderer is up.'));
 
 app.post('/render', async (req, res) => {
   try {
-    if (API_KEY && req.get('x-api-key') !== API_KEY) {
-      return res.status(401).json({ error: 'bad api key' });
-    }
-    const players = Array.isArray(req.body?.players) ? req.body.players.slice(0, 6) : [];
-    if (!players.length) return res.status(400).json({ error: 'no players' });
-
-    const norm = players.map(p => ({
+    if (API_KEY && req.get('x-api-key') !== API_KEY) return res.status(401).json({ error: 'bad api key' });
+    const raw = Array.isArray(req.body?.players) ? req.body.players.slice(0, 6) : [];
+    if (!raw.length) return res.status(400).json({ error: 'no players' });
+    const players = raw.map(p => ({
       name: String(p.name || '').slice(0, 24),
       species: String(p.species || ''),
       level: Number(p.level) || 0,
       hpCur: Number(p.hpCur) || 0,
       hpMax: Number(p.hpMax) || 0
     }));
-
-    const png = await renderParty(norm);
+    const png = await renderParty(players);
     const link = await uploadImage(png);
     res.json({ link });
   } catch (e) {

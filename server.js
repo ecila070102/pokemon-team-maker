@@ -101,11 +101,13 @@ function contentBBox(sprite) {
   return box;
 }
 
-// draw a sprite's *content* (padding trimmed) scaled to fill a square slot, centered
-function drawSpriteFit(ctx, sprite, cx, cy, maxSize) {
+// draw a sprite's *content* (padding trimmed) scaled to a square slot, centered.
+// ratio < 1 leaves breathing room so sprites don't touch the slot edges.
+function drawSpriteFit(ctx, sprite, cx, cy, maxSize, ratio = 0.8) {
   if (!sprite) return;
   const b = contentBBox(sprite);
-  const scale = Math.min(maxSize / b.w, maxSize / b.h);
+  const target = maxSize * ratio;
+  const scale = Math.min(target / b.w, target / b.h);
   const dw = Math.round(b.w * scale), dh = Math.round(b.h * scale);
   ctx.drawImage(
     sprite, b.x, b.y, b.w, b.h,
@@ -169,7 +171,7 @@ function drawLead(ctx, p, sprite) {
   g.addColorStop(0, C.leadFill1); g.addColorStop(1, C.leadFill2);
   ctx.fillStyle = g; roundRect(ctx, x + 6, y + 6, w - 12, h - 12, 8); ctx.fill();
 
-  drawSpriteFit(ctx, sprite, x + w / 2, y + 88, 184);
+  drawSpriteFit(ctx, sprite, x + w / 2, y + 84, 150, 0.82);
   text(ctx, p.name, x + 24, y + h - 92, 24, C.textLight, sh);
   text(ctx, 'Lv' + p.level, x + 24, y + h - 60, 20, C.textLight, sh);
   rightText(ctx, hpStr(p), x + w - 24, y + h - 56, 18, C.textLight, sh);
@@ -185,7 +187,7 @@ function drawPanel(ctx, p, y, sprite) {
   ctx.fillStyle = g; roundRect(ctx, x + 4, y + 4, w - 8, h - 8, 7); ctx.fill();
   ctx.fillStyle = C.panelTop; roundRect(ctx, x + 4, y + 4, w - 8, 6, 7); ctx.fill();
 
-  drawSpriteFit(ctx, sprite, x + 50, y + h / 2, 88);
+  drawSpriteFit(ctx, sprite, x + 50, y + h / 2, 70, 0.78);
   text(ctx, p.name, x + 92, y + 38, 20, C.textLight, sh);
   text(ctx, 'Lv' + p.level, x + 92, y + 68, 17, C.textLight, sh);
   text(ctx, 'HP', x + 330, y + 40, 13, C.hpLabel, sh);

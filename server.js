@@ -73,13 +73,44 @@ async function getSprite(species) {
   } catch (e) { spriteCache.set(slug, null); return null; }
 }
 
-// draw a sprite scaled to fit inside a box (keeps aspect, integer-ish, centered)
+// find the tight bounding box of non-transparent pixels (cached per sprite)
+const bboxCache = new WeakMap();
+function contentBBox(sprite) {
+  if (bboxCache.has(sprite)) return bboxCache.get(sprite);
+  const w = sprite.width, h = sprite.height;
+  let box = { x: 0, y: 0, w, h };
+  try {
+    const tmp = createCanvas(w, h);
+    const tctx = tmp.getContext('2d');
+    tctx.drawImage(sprite, 0, 0);
+    const data = tctx.getImageData(0, 0, w, h).data;
+    let minX = w, minY = h, maxX = -1, maxY = -1;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (data[(y * w + x) * 4 + 3] > 16) { // alpha threshold
+          if (x < minX) minX = x; if (x > maxX) maxX = x;
+          if (y < minY) minY = y; if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (maxX >= minX && maxY >= minY) {
+      box = { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+    }
+  } catch (e) { /* fall back to full frame */ }
+  bboxCache.set(sprite, box);
+  return box;
+}
+
+// draw a sprite's *content* (padding trimmed) scaled to fill a square slot, centered
 function drawSpriteFit(ctx, sprite, cx, cy, maxSize) {
   if (!sprite) return;
-  const sw = sprite.width || maxSize, shh = sprite.height || maxSize;
-  const scale = Math.min(maxSize / sw, maxSize / shh);
-  const w = Math.round(sw * scale), h = Math.round(shh * scale);
-  ctx.drawImage(sprite, Math.round(cx - w / 2), Math.round(cy - h / 2), w, h);
+  const b = contentBBox(sprite);
+  const scale = Math.min(maxSize / b.w, maxSize / b.h);
+  const dw = Math.round(b.w * scale), dh = Math.round(b.h * scale);
+  ctx.drawImage(
+    sprite, b.x, b.y, b.w, b.h,
+    Math.round(cx - dw / 2), Math.round(cy - dh / 2), dw, dh
+  );
 }
 
 // ---------- palette (FRLG) ----------
@@ -195,7 +226,8 @@ async function renderParty(players, hourLabel) {
 async function uploadImage(pngBuffer) {
   const form = new FormData();
   form.append('image', pngBuffer.toString('base64'));
-  const url = 'https://api.imgbb.com/1/upload?key=' + encodeURIComponent(process.env.IMGBB_API_KEY);
+  const EXPIRE_SECONDS = 30 * 24 * 60 * 60; // 30 days
+  const url = 'https://api.imgbb.com/1/upload?expiration=' + EXPIRE_SECONDS + '&key=' + encodeURIComponent(process.env.IMGBB_API_KEY);
   const r = await fetch(url, { method: 'POST', body: form });
   const data = await r.json();
   if (!data || !data.success) throw new Error('ImgBB said: ' + JSON.stringify(data && (data.error || data)));

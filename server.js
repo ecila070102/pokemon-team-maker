@@ -153,19 +153,18 @@ async function renderParty(players) {
 }
 
 // ---- image host upload (0x0.st tolerates datacenter IPs) ----
+// ---- ImgBB upload (API key, works from cloud IPs) ----
 async function uploadImage(pngBuffer) {
   const form = new FormData();
-  form.append('file', new Blob([pngBuffer], { type: 'image/png' }), 'party.png');
-  const r = await fetch('https://0x0.st', {
-    method: 'POST',
-    headers: { 'User-Agent': 'gba-party-renderer/1.0' }, // 0x0.st rejects blank UAs
-    body: form
-  });
-  const text = (await r.text()).trim();
-  if (!/^https?:\/\//.test(text)) throw new Error('Host said: ' + text);
-  return text; // e.g. https://0x0.st/abc.png
+  form.append('image', pngBuffer.toString('base64'));
+  const url = 'https://api.imgbb.com/1/upload?key=' + encodeURIComponent(process.env.IMGBB_API_KEY);
+  const r = await fetch(url, { method: 'POST', body: form });
+  const data = await r.json();
+  if (!data || !data.success) {
+    throw new Error('ImgBB said: ' + JSON.stringify(data && (data.error || data)));
+  }
+  return data.data.url; // https://i.ibb.co/xxxx/party.png
 }
-
 // ---- routes ----
 app.get('/', (_req, res) => res.send('GBA party renderer is up.'));
 

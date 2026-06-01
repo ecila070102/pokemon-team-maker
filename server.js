@@ -123,15 +123,12 @@ function rightText(ctx, txt, rightX, y, size, color, shadow) {
   text(ctx, txt, rightX - w, y, size, color, shadow);
 }
 function hpBarBlock(ctx, barX, barW, top, h, cur, max) {
+  // HP bar is cosmetic: always drawn full + green (the cur/max text stays accurate).
   ctx.fillStyle = C.hpBox;   roundRect(ctx, barX - 2, top - 2, barW + 4, h + 4, 3); ctx.fill();
   ctx.fillStyle = C.hpTrack; ctx.fillRect(barX, top, barW, h);
-  const frac = max > 0 ? Math.max(0, Math.min(1, cur / max)) : 1;
-  const fillW = Math.round(barW * frac);
-  const [c1, c2] = hpColors(frac);
-  if (fillW > 0) {
-    ctx.fillStyle = c1; ctx.fillRect(barX, top, fillW, h);
-    ctx.fillStyle = c2; ctx.fillRect(barX, top, fillW, 3);
-  }
+  const [c1, c2] = hpColors(1);
+  ctx.fillStyle = c1; ctx.fillRect(barX, top, barW, h);
+  ctx.fillStyle = c2; ctx.fillRect(barX, top, barW, 3);
 }
 
 function drawLead(ctx, p, sprite) {
@@ -141,7 +138,7 @@ function drawLead(ctx, p, sprite) {
   g.addColorStop(0, C.leadFill1); g.addColorStop(1, C.leadFill2);
   ctx.fillStyle = g; roundRect(ctx, x + 6, y + 6, w - 12, h - 12, 8); ctx.fill();
 
-  drawSpriteFit(ctx, sprite, x + w / 2, y + 86, 130);
+  drawSpriteFit(ctx, sprite, x + w / 2, y + 88, 184);
   text(ctx, p.name, x + 24, y + h - 92, 24, C.textLight, sh);
   text(ctx, 'Lv' + p.level, x + 24, y + h - 60, 20, C.textLight, sh);
   rightText(ctx, hpStr(p), x + w - 24, y + h - 56, 18, C.textLight, sh);
@@ -157,7 +154,7 @@ function drawPanel(ctx, p, y, sprite) {
   ctx.fillStyle = g; roundRect(ctx, x + 4, y + 4, w - 8, h - 8, 7); ctx.fill();
   ctx.fillStyle = C.panelTop; roundRect(ctx, x + 4, y + 4, w - 8, 6, 7); ctx.fill();
 
-  drawSpriteFit(ctx, sprite, x + 46, y + h / 2, 66);
+  drawSpriteFit(ctx, sprite, x + 50, y + h / 2, 88);
   text(ctx, p.name, x + 92, y + 38, 20, C.textLight, sh);
   text(ctx, 'Lv' + p.level, x + 92, y + 68, 17, C.textLight, sh);
   text(ctx, 'HP', x + 330, y + 40, 13, C.hpLabel, sh);

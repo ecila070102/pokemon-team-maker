@@ -1,6 +1,6 @@
 /* ============================================================
  *  GBA PARTY-SCREEN RENDERER  (FireRed/LeafGreen faithful)
- *  POST /render  { players:[{name,species,level,hpCur,hpMax}] }  -> { link }
+ *  POST /render  { players:[{name,species,level,hpCur,hpMax}], hour }  -> { link }
  *  Upload host: ImgBB (env IMGBB_API_KEY).  Optional API_KEY to lock endpoint.
  * ============================================================ */
 
@@ -13,6 +13,10 @@ app.use(express.json({ limit: '1mb' }));
 const PORT = process.env.PORT || 3000;
 const API_KEY = process.env.API_KEY || '';
 const FONT_NAME = 'PartyFont';
+
+// Sprite set: 'box' = PC/menu icons (Gen7/8), 'frlg' = Gen3 battle,
+//             'gen1' = Red/Blue battle, 'gen2' = Gold/Silver/Crystal battle
+const SPRITE_STYLE = 'box';
 
 // ---------- font ----------
 let fontReady = false;
@@ -31,6 +35,27 @@ const font = (px) => (fontReady ? `${px}px "${FONT_NAME}"` : `bold ${px}px monos
 const spriteCache = new Map();
 const slugify = (s) => String(s || '').toLowerCase().trim()
   .replace(/♀/g, '-f').replace(/♂/g, '-m').replace(/[.'’]/g, '').replace(/\s+/g, '-');
+
+function pickSpriteUrl(d) {
+  const v = d?.sprites?.versions || {};
+  const fallback = d?.sprites?.front_default;
+  switch (SPRITE_STYLE) {
+    case 'box':
+      return v['generation-viii']?.icons?.front_default
+          || v['generation-vii']?.icons?.front_default
+          || fallback;
+    case 'frlg':
+      return v['generation-iii']?.['firered-leafgreen']?.front_default || fallback;
+    case 'gen1':
+      return v['generation-i']?.['red-blue']?.front_default || fallback;
+    case 'gen2':
+      return v['generation-ii']?.crystal?.front_default
+          || v['generation-ii']?.gold?.front_default || fallback;
+    default:
+      return fallback;
+  }
+}
+
 async function getSprite(species) {
   const slug = slugify(species);
   if (!slug) return null;
@@ -39,14 +64,22 @@ async function getSprite(species) {
     const r = await fetch('https://pokeapi.co/api/v2/pokemon/' + encodeURIComponent(slug));
     if (!r.ok) { spriteCache.set(slug, null); return null; }
     const d = await r.json();
-    const url = d?.sprites?.versions?.['generation-iii']?.['firered-leafgreen']?.front_default
-             || d?.sprites?.front_default;
+    const url = pickSpriteUrl(d);
     if (!url) { spriteCache.set(slug, null); return null; }
     const ir = await fetch(url);
     const img = await loadImage(Buffer.from(await ir.arrayBuffer()));
     spriteCache.set(slug, img);
     return img;
   } catch (e) { spriteCache.set(slug, null); return null; }
+}
+
+// draw a sprite scaled to fit inside a box (keeps aspect, integer-ish, centered)
+function drawSpriteFit(ctx, sprite, cx, cy, maxSize) {
+  if (!sprite) return;
+  const sw = sprite.width || maxSize, shh = sprite.height || maxSize;
+  const scale = Math.min(maxSize / sw, maxSize / shh);
+  const w = Math.round(sw * scale), h = Math.round(shh * scale);
+  ctx.drawImage(sprite, Math.round(cx - w / 2), Math.round(cy - h / 2), w, h);
 }
 
 // ---------- palette (FRLG) ----------
@@ -56,7 +89,7 @@ const C = {
   leadFill1: '#90d4dc', leadFill2: '#74c0ca', leadBorder: '#f08868',
   panelFill1:'#5c94d4', panelFill2:'#3c74bc', panelTop:'#8cbcec', panelBorder:'#1c4c94',
   hpLabel:   '#f0b028',
-  hpBox:     '#283038', hpTrack:'#586068',
+  hpBox:     '#181c22', hpTrack:'#2c3440',
   textLight: '#f8f8f8', shadowDark:'#404858', shadowOnCyan:'#3c7078',
   boxBorder: '#1c4c94', boxFill:'#f8f8f8', boxText:'#404858',
   cancel:    '#d83838'
@@ -93,9 +126,12 @@ function hpBarBlock(ctx, barX, barW, top, h, cur, max) {
   ctx.fillStyle = C.hpBox;   roundRect(ctx, barX - 2, top - 2, barW + 4, h + 4, 3); ctx.fill();
   ctx.fillStyle = C.hpTrack; ctx.fillRect(barX, top, barW, h);
   const frac = max > 0 ? Math.max(0, Math.min(1, cur / max)) : 1;
+  const fillW = Math.round(barW * frac);
   const [c1, c2] = hpColors(frac);
-  ctx.fillStyle = c1; ctx.fillRect(barX, top, barW * frac, h);
-  ctx.fillStyle = c2; ctx.fillRect(barX, top, barW * frac, 3);
+  if (fillW > 0) {
+    ctx.fillStyle = c1; ctx.fillRect(barX, top, fillW, h);
+    ctx.fillStyle = c2; ctx.fillRect(barX, top, fillW, 3);
+  }
 }
 
 function drawLead(ctx, p, sprite) {
@@ -105,7 +141,7 @@ function drawLead(ctx, p, sprite) {
   g.addColorStop(0, C.leadFill1); g.addColorStop(1, C.leadFill2);
   ctx.fillStyle = g; roundRect(ctx, x + 6, y + 6, w - 12, h - 12, 8); ctx.fill();
 
-  if (sprite) ctx.drawImage(sprite, x + w / 2 - 64, y + 22, 128, 128);
+  drawSpriteFit(ctx, sprite, x + w / 2, y + 86, 130);
   text(ctx, p.name, x + 24, y + h - 92, 24, C.textLight, sh);
   text(ctx, 'Lv' + p.level, x + 24, y + h - 60, 20, C.textLight, sh);
   rightText(ctx, hpStr(p), x + w - 24, y + h - 56, 18, C.textLight, sh);
@@ -121,7 +157,7 @@ function drawPanel(ctx, p, y, sprite) {
   ctx.fillStyle = g; roundRect(ctx, x + 4, y + 4, w - 8, h - 8, 7); ctx.fill();
   ctx.fillStyle = C.panelTop; roundRect(ctx, x + 4, y + 4, w - 8, 6, 7); ctx.fill();
 
-  if (sprite) ctx.drawImage(sprite, x + 12, y + (h - 64) / 2, 64, 64);
+  drawSpriteFit(ctx, sprite, x + 46, y + h / 2, 66);
   text(ctx, p.name, x + 92, y + 38, 20, C.textLight, sh);
   text(ctx, 'Lv' + p.level, x + 92, y + 68, 17, C.textLight, sh);
   text(ctx, 'HP', x + 330, y + 40, 13, C.hpLabel, sh);
@@ -129,7 +165,7 @@ function drawPanel(ctx, p, y, sprite) {
   rightText(ctx, hpStr(p), x + w - 18, y + 72, 17, C.textLight, sh);
 }
 
-function drawBackground(ctx) {
+function drawBackground(ctx, hourLabel) {
   ctx.fillStyle = C.bg; ctx.fillRect(0, 0, 1080, 720);
   ctx.strokeStyle = C.stripe; ctx.lineWidth = 26;
   for (let i = -720; i < 1080; i += 92) {
@@ -137,12 +173,12 @@ function drawBackground(ctx) {
   }
   ctx.fillStyle = C.boxBorder; roundRect(ctx, 18, 612, 772, 90, 10); ctx.fill();
   ctx.fillStyle = C.boxFill;   roundRect(ctx, 26, 620, 756, 74, 7); ctx.fill();
-  text(ctx, 'Choose a POKéMON.', 46, 670, 22, C.boxText, '#c8c8c8');
+  text(ctx, hourLabel, 46, 670, 24, C.boxText, '#c8c8c8');
   ctx.fillStyle = C.cancel; ctx.beginPath(); ctx.arc(898, 657, 30, 0, Math.PI * 2); ctx.fill();
   text(ctx, 'CANCEL', 942, 668, 22, C.textLight, C.shadowDark);
 }
 
-async function renderParty(players) {
+async function renderParty(players, hourLabel) {
   await ensureFont();
   const sprites = [];
   for (const p of players) sprites.push(await getSprite(p.species));
@@ -150,7 +186,7 @@ async function renderParty(players) {
   const canvas = createCanvas(1080, 720);
   const ctx = canvas.getContext('2d');
   ctx.imageSmoothingEnabled = false;   // crisp pixel sprites
-  drawBackground(ctx);
+  drawBackground(ctx, hourLabel);
   drawLead(ctx, players[0], sprites[0]);
   for (let i = 1; i < players.length && i < 6; i++) {
     drawPanel(ctx, players[i], 28 + (i - 1) * 108, sprites[i]);
@@ -184,7 +220,10 @@ app.post('/render', async (req, res) => {
       hpCur: Number(p.hpCur) || 0,
       hpMax: Number(p.hpMax) || 0
     }));
-    const png = await renderParty(players);
+    const hour = req.body?.hour;
+    const hourLabel = (hour === undefined || hour === null || hour === '')
+      ? 'Hour' : ('Hour ' + hour);
+    const png = await renderParty(players, hourLabel);
     const link = await uploadImage(png);
     res.json({ link });
   } catch (e) {

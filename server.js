@@ -196,9 +196,11 @@ function drawBackground(ctx, hourLabel) {
 
 async function renderParty(players, monitor, hourLabel) {
   await ensureFont();
-  const trainer = await getTrainer();
-  const sprites = [];
-  for (const p of players) sprites.push(await getSprite(p.species));
+  // fetch trainer + all player sprites concurrently (much faster than one-by-one)
+  const [trainer, ...sprites] = await Promise.all([
+    getTrainer(),
+    ...players.map(p => getSprite(p.species))
+  ]);
 
   const canvas = createCanvas(1080, 720);
   const ctx = canvas.getContext('2d');

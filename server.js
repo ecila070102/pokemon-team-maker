@@ -136,7 +136,8 @@ const C = {
   panelFill1:'#5c94d4', panelFill2:'#3c74bc', panelTop:'#8cbcec', panelBorder:'#1c4c94',
   hpLabel:'#f0b028', hpBox:'#181c22', hpTrack:'#2c3440',
   textLight:'#f8f8f8', shadowDark:'#404858', shadowOnCyan:'#3c7078',
-  boxBorder:'#1c4c94', boxFill:'#f8f8f8', boxText:'#404858', cancel:'#d83838'
+  boxBorder:'#1c4c94', boxFill:'#f8f8f8', boxText:'#404858', cancel:'#d83838',
+  inText:'#2c8c3c', outText:'#c83838'
 };
 
 // ---------- draw helpers ----------
@@ -196,7 +197,27 @@ function drawPanel(ctx, p, y, sprite) {
   rightText(ctx, hpStr(p), x + w - 18, y + 72, 17, C.textLight, sh);
 }
 
-function drawBackground(ctx, hourLabel) {
+// draw a label + comma list that fits within maxW, shrinking font if needed
+function fitLine(ctx, label, labelColor, names, x, y, maxW) {
+  const full = names.join(', ');
+  let size = 16;
+  ctx.font = font(size);
+  while (size > 9 && ctx.measureText(label + ' ' + full).width > maxW) {
+    size -= 1; ctx.font = font(size);
+  }
+  // label (colored), then names in box text color
+  ctx.fillStyle = labelColor; ctx.font = font(size);
+  ctx.fillText(label + ' ', x, y);
+  const lw = ctx.measureText(label + ' ').width;
+  ctx.fillStyle = C.boxText;
+  let line = full;
+  // truncate with ellipsis if still too wide at min size
+  while (line && ctx.measureText(line).width > maxW - lw) line = line.slice(0, -1);
+  if (line !== full) line = line.slice(0, -1) + '\u2026';
+  ctx.fillText(line, x + lw, y);
+}
+
+function drawBackground(ctx, hourLabel, inList, outList) {
   ctx.fillStyle = C.bg; ctx.fillRect(0, 0, 1080, 720);
   ctx.strokeStyle = C.stripe; ctx.lineWidth = 26;
   for (let i = -720; i < 1080; i += 92) {
@@ -204,12 +225,24 @@ function drawBackground(ctx, hourLabel) {
   }
   ctx.fillStyle = C.boxBorder; roundRect(ctx, 18, 612, 772, 90, 10); ctx.fill();
   ctx.fillStyle = C.boxFill;   roundRect(ctx, 26, 620, 756, 74, 7); ctx.fill();
-  text(ctx, hourLabel, 46, 670, 24, C.boxText, '#c8c8c8');
+
+  const hasChanges = (inList && inList.length) || (outList && outList.length);
+  if (!hasChanges) {
+    text(ctx, hourLabel, 46, 670, 24, C.boxText, '#c8c8c8');
+  } else {
+    // hour on the first line (small), then In / Out lines
+    ctx.textBaseline = 'alphabetic';
+    text(ctx, hourLabel, 46, 644, 15, C.boxText, '#c8c8c8');
+    const maxW = 720;
+    if (inList && inList.length)  fitLine(ctx, 'In:',  C.inText,  inList,  46, 666, maxW);
+    if (outList && outList.length) fitLine(ctx, 'Out:', C.outText, outList, 46, 686, maxW);
+  }
+
   ctx.fillStyle = C.cancel; ctx.beginPath(); ctx.arc(898, 657, 30, 0, Math.PI * 2); ctx.fill();
   text(ctx, 'CANCEL', 942, 668, 22, C.textLight, C.shadowDark);
 }
 
-async function renderParty(players, monitor, hourLabel, trainerName) {
+async function renderParty(players, monitor, hourLabel, trainerName, inList, outList) {
   await ensureFont();
   // fetch trainer + all player sprites concurrently (much faster than one-by-one)
   const [trainer, ...sprites] = await Promise.all([
@@ -220,7 +253,7 @@ async function renderParty(players, monitor, hourLabel, trainerName) {
   const canvas = createCanvas(1080, 720);
   const ctx = canvas.getContext('2d');
   ctx.imageSmoothingEnabled = false;
-  drawBackground(ctx, hourLabel);
+  drawBackground(ctx, hourLabel, inList, outList);
   drawMonitor(ctx, monitor, trainer);
   const n = Math.min(players.length, 5);
   for (let i = 0; i < n; i++) drawPanel(ctx, players[i], 24 + i * 108, sprites[i]);
@@ -259,7 +292,9 @@ app.post('/render', async (req, res) => {
     const hour = req.body?.hour;
     const hourLabel = (hour === undefined || hour === null || hour === '') ? 'Hour' : ('Hour ' + hour);
     const trainerName = String(req.body?.trainerSprite || '').slice(0, 40);
-    const png = await renderParty(players, monitor, hourLabel, trainerName);
+    const inList  = Array.isArray(req.body?.inList)  ? req.body.inList.map(x => String(x).slice(0,24)).slice(0,8)  : [];
+    const outList = Array.isArray(req.body?.outList) ? req.body.outList.map(x => String(x).slice(0,24)).slice(0,8) : [];
+    const png = await renderParty(players, monitor, hourLabel, trainerName, inList, outList);
     const link = await uploadImage(png);
     res.json({ link });
   } catch (e) {

@@ -18,9 +18,11 @@ const FONT_NAME = 'PartyFont';
 
 // Pokemon sprite set: 'box' = PC/menu icons, 'frlg' = Gen3 battle, 'gen1', 'gen2'
 const SPRITE_STYLE = 'box';
-// Trainer sprite for the Monitor box (override with env TRAINER_SPRITE_URL)
-const TRAINER_SPRITE_URL = process.env.TRAINER_SPRITE_URL
-  || 'https://play.pokemonshowdown.com/sprites/trainers/red.png';
+// Trainer sprites for the Monitor box (Showdown). A name is picked per render;
+// if none given, one of COMMON_TRAINERS is chosen at random.
+const TRAINER_BASE = 'https://play.pokemonshowdown.com/sprites/trainers/';
+const DEFAULT_TRAINER = process.env.DEFAULT_TRAINER || 'red';
+const COMMON_TRAINERS = ['red','leaf','blue','ethan','lyra','brendan','may','lucas','dawn','silver'];
 
 // ---------- font ----------
 let fontReady = false;
@@ -70,15 +72,28 @@ async function getSprite(species) {
   } catch (e) { spriteCache.set(slug, null); return null; }
 }
 
-// ---------- trainer sprite (cached once) ----------
-let trainerSprite = undefined;
-async function getTrainer() {
-  if (trainerSprite !== undefined) return trainerSprite;
+// ---------- trainer sprite (cached per name) ----------
+const trainerCache = new Map();
+function trainerSlug(s) {
+  return String(s || '').toLowerCase().trim().replace(/[.'\u2019]/g, '').replace(/\s+/g, '');
+}
+async function getTrainer(name) {
+  let slug = trainerSlug(name);
+  if (!slug) slug = COMMON_TRAINERS[Math.floor(Math.random() * COMMON_TRAINERS.length)];
+  if (trainerCache.has(slug)) return trainerCache.get(slug);
   try {
-    const r = await fetch(TRAINER_SPRITE_URL);
-    trainerSprite = await loadImage(Buffer.from(await r.arrayBuffer()));
-  } catch (e) { console.warn('trainer fetch failed:', e.message); trainerSprite = null; }
-  return trainerSprite;
+    const r = await fetch(TRAINER_BASE + encodeURIComponent(slug) + '.png');
+    if (!r.ok) throw new Error('http ' + r.status);
+    const img = await loadImage(Buffer.from(await r.arrayBuffer()));
+    trainerCache.set(slug, img);
+    return img;
+  } catch (e) {
+    console.warn('trainer fetch failed (' + slug + '):', e.message);
+    // fall back to default once, if we weren't already trying it
+    if (slug !== trainerSlug(DEFAULT_TRAINER)) return getTrainer(DEFAULT_TRAINER);
+    trainerCache.set(slug, null);
+    return null;
+  }
 }
 
 // ---------- padding trim + fit ----------
@@ -194,11 +209,11 @@ function drawBackground(ctx, hourLabel) {
   text(ctx, 'CANCEL', 942, 668, 22, C.textLight, C.shadowDark);
 }
 
-async function renderParty(players, monitor, hourLabel) {
+async function renderParty(players, monitor, hourLabel, trainerName) {
   await ensureFont();
   // fetch trainer + all player sprites concurrently (much faster than one-by-one)
   const [trainer, ...sprites] = await Promise.all([
-    getTrainer(),
+    getTrainer(trainerName),
     ...players.map(p => getSprite(p.species))
   ]);
 
@@ -243,7 +258,8 @@ app.post('/render', async (req, res) => {
     const monitor = String(req.body?.monitor || '').slice(0, 24);
     const hour = req.body?.hour;
     const hourLabel = (hour === undefined || hour === null || hour === '') ? 'Hour' : ('Hour ' + hour);
-    const png = await renderParty(players, monitor, hourLabel);
+    const trainerName = String(req.body?.trainerSprite || '').slice(0, 40);
+    const png = await renderParty(players, monitor, hourLabel, trainerName);
     const link = await uploadImage(png);
     res.json({ link });
   } catch (e) {

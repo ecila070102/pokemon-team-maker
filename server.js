@@ -241,8 +241,8 @@ function drawBackground(ctx, hourLabel, inList, outList) {
     ctx.textBaseline = 'alphabetic';
     text(ctx, hourLabel, 46, 644, 15, C.boxText, '#c8c8c8');
     const maxW = 720;
-    if (inList && inList.length)  fitLine(ctx, 'In:',  C.inText,  inList,  46, 666, maxW);
-    if (outList && outList.length) fitLine(ctx, 'Out:', C.outText, outList, 46, 686, maxW);
+    if (inList && inList.length)  fitLine(ctx, 'I Choose You:',  C.inText,  inList,  46, 666, maxW);
+    if (outList && outList.length) fitLine(ctx, 'Return:', C.outText, outList, 46, 686, maxW);
   }
 
   ctx.fillStyle = C.cancel; ctx.beginPath(); ctx.arc(898, 657, 30, 0, Math.PI * 2); ctx.fill();

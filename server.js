@@ -9,6 +9,12 @@
 const express = require('express');
 const { createCanvas, loadImage, GlobalFonts } = require('@napi-rs/canvas');
 
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key:    process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
 const app = express();
 app.use(express.json({ limit: '1mb' }));
 
@@ -260,26 +266,20 @@ async function renderParty(players, monitor, hourLabel, trainerName, inList, out
   return canvas.toBuffer('image/png');
 }
 
-// ---------- ImgBB upload (30-day expiry) ----------
-
-// ---------- Catbox upload (authenticated with userhash) ----------
 async function uploadImage(pngBuffer) {
-  const form = new FormData();
-  form.append('reqtype', 'fileupload');
-  form.append('userhash', process.env.CATBOX_USERHASH);
-  form.append('fileToUpload',
-    new Blob([pngBuffer], { type: 'image/png' }),
-    'party.png'
-  );
-  const r = await fetch('https://catbox.moe/user/api.php', {
-    method: 'POST',
-    body: form
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { resource_type: 'image', format: 'png', folder: 'party' },
+      (err, result) => {
+        if (err) return reject(err);
+        if (!result?.secure_url) return reject(new Error('no url returned'));
+        resolve(result.secure_url);
+      }
+    );
+    stream.end(pngBuffer);
   });
-  if (!r.ok) throw new Error('Catbox HTTP ' + r.status);
-  const url = (await r.text()).trim();
-  if (!url.startsWith('https://')) throw new Error('Catbox said: ' + url);
-  return url;
 }
+
 
 // ---------- routes ----------
 app.get('/', (_req, res) => res.send('GBA party renderer is up.'));

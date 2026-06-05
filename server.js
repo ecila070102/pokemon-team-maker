@@ -8,6 +8,7 @@
 
 const express = require('express');
 const { createCanvas, loadImage, GlobalFonts } = require('@napi-rs/canvas');
+const cloudinary = require('cloudinary').v2;
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,

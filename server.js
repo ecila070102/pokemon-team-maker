@@ -261,16 +261,24 @@ async function renderParty(players, monitor, hourLabel, trainerName, inList, out
 }
 
 // ---------- ImgBB upload (30-day expiry) ----------
+
+// ---------- Catbox upload (authenticated with userhash) ----------
 async function uploadImage(pngBuffer) {
   const form = new FormData();
-  form.append('image', pngBuffer.toString('base64'));
-  const EXPIRE_SECONDS = 30 * 24 * 60 * 60;
-  const url = 'https://api.imgbb.com/1/upload?expiration=' + EXPIRE_SECONDS
-            + '&key=' + encodeURIComponent(process.env.IMGBB_API_KEY);
-  const r = await fetch(url, { method: 'POST', body: form });
-  const data = await r.json();
-  if (!data || !data.success) throw new Error('ImgBB said: ' + JSON.stringify(data && (data.error || data)));
-  return data.data.url;
+  form.append('reqtype', 'fileupload');
+  form.append('userhash', process.env.CATBOX_USERHASH);
+  form.append('fileToUpload',
+    new Blob([pngBuffer], { type: 'image/png' }),
+    'party.png'
+  );
+  const r = await fetch('https://catbox.moe/user/api.php', {
+    method: 'POST',
+    body: form
+  });
+  if (!r.ok) throw new Error('Catbox HTTP ' + r.status);
+  const url = (await r.text()).trim();
+  if (!url.startsWith('https://')) throw new Error('Catbox said: ' + url);
+  return url;
 }
 
 // ---------- routes ----------

@@ -157,7 +157,11 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.arcTo(x, y, x + w, y, r);
   ctx.closePath();
 }
-const hpStr = (p) => (p.hpMax ? `${p.hpCur}/ ${p.hpMax}` : '—');
+const hpStr = (p) => {
+  if (!p.hpMax) return '—';
+  const isv = Math.round(p.hpCur * 0.8 + p.hpMax * 0.2);
+  return `${p.hpCur}/${p.hpMax} (${isv}%)`;
+};
 function text(ctx, txt, x, y, size, color, shadow) {
   ctx.font = font(size); ctx.textBaseline = 'alphabetic';
   ctx.fillStyle = shadow || C.shadowDark; ctx.fillText(txt, x + 2, y + 2);
